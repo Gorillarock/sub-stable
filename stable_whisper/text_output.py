@@ -4,7 +4,7 @@ from typing import List
 from stable_whisper.stabilization import group_word_timestamps, tighten_timestamps, MIN_DUR
 
 __all__ = ['results_to_sentence_srt', 'results_to_word_srt', 'results_to_token_srt',
-           'results_to_sentence_word_ass', 'to_srt', 'results_to_srt', 'save_as_json']
+           'results_to_sentence_word_ass', 'to_srt', 'results_to_srt', 'save_as_json', 'results_to_sentence_vtt']
 
 
 def to_srt(lines: List[dict], save_path: str = None, strip=False) -> str:
@@ -30,6 +30,30 @@ def to_srt(lines: List[dict], save_path: str = None, strip=False) -> str:
         print(f'Saved: {os.path.abspath(save_path)}')
 
     return srt_str
+
+def to_vtt(lines: List[dict], save_path: str = None, strip=False) -> str:
+    """
+    lines: List[dict]
+        [{start:<start-timestamp-of-text>, end:<end-timestamp-of-text>, text:<str-of-text>}, ...]
+    """
+
+    def secs_to_hhmmss(secs: (float, int)):
+        mm, ss = divmod(secs, 60)
+        hh, mm = divmod(mm, 60)
+        return f'{hh:0>2.0f}:{mm:0>2.0f}:{ss:0>6.3f}'
+    vtt_str = 'WEBVTT\n\n'
+    vtt_str += '\n'.join(
+        f'{i}\n'
+        f'{secs_to_hhmmss(sub["start"])} --> {secs_to_hhmmss(sub["end"])}\n'
+        f'{sub["text"].strip() if strip else sub["text"]}\n'
+        for i, sub in enumerate(lines, 1))
+
+    if save_path:
+        with open(save_path, 'w', encoding='utf-8') as f:
+            f.write(vtt_str)
+        print(f'Saved: {os.path.abspath(save_path)}')
+
+    return vtt_str
 
 
 def results_to_srt(res: dict, srt_path, word_level=True, combine_compound=False,
@@ -86,6 +110,49 @@ def results_to_sentence_srt(res: dict, srt_path,
         i += 1
 
     to_srt(segs, srt_path, strip=strip)
+
+def results_to_sentence_vtt(res: dict, vtt_path,
+                            end_at_last_word=False,
+                            end_before_period=False,
+                            start_at_first_word=False,
+                            strip=True):
+    """
+
+    Parameters
+    ----------
+    res: dict
+        results from modified model
+    srt_path: str
+        output path of srt
+    end_at_last_word: bool
+        set end-of-segment to timestamp-of-last-token
+    end_before_period: bool
+        set end-of-segment to timestamp-of-last-non-period-token
+    start_at_first_word: bool
+        set start-of-segment to timestamp-of-first-token
+    strip: bool
+        perform strip() on each segment
+
+    """
+    segs = tighten_timestamps(res,
+                              end_at_last_word=end_at_last_word,
+                              end_before_period=end_before_period,
+                              start_at_first_word=start_at_first_word)['segments']
+
+    max_idx = len(segs) - 1
+    i = 1
+    while i <= max_idx:
+        if not (segs[i]['end'] - segs[i]['start']):
+            if segs[i - 1]['end'] == segs[i]['end']:
+                segs[i - 1]['text'] += (' ' + segs[i]['text'].strip())
+                del segs[i]
+                max_idx -= 1
+                continue
+            else:
+                segs[i]['start'] = segs[i - 1]['end']
+        i += 1
+
+    to_vtt(segs, vtt_path, strip=strip)
 
 
 def results_to_word_srt(res: dict, srt_path, combine_compound=False, strip=False, min_dur: float = None):
